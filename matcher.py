@@ -1,4 +1,4 @@
-"""Сопоставление матчей SportsPredict и The Odds API."""
+"""Map SportsPredict matches to The Odds API."""
 
 from __future__ import annotations
 
@@ -16,20 +16,16 @@ _VS_PATTERN = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
 
 
 def normalize_team_name(name: str) -> str:
-    """Приводит название команды к канонической форме для сравнения."""
+    """Normalize a team name for comparison."""
     cleaned = " ".join(name.strip().lower().split())
     return TEAM_ALIASES.get(cleaned, cleaned)
 
 
 def parse_match_name(name: str) -> tuple[str, str] | None:
-    """
-    Разбирает «USA vs AUS» или «Team A vs Team B» на (home, away).
-
-    SportsPredict использует home первым в name.
-    """
+    """Parse 'USA vs AUS' into (home, away). SportsPredict lists home first."""
     parts = _VS_PATTERN.split(name.strip(), maxsplit=1)
     if len(parts) != 2:
-        logger.warning("Не удалось разобрать название матча: %r", name)
+        logger.warning("Failed to parse match name: %r", name)
         return None
     return parts[0].strip(), parts[1].strip()
 
@@ -43,11 +39,7 @@ def find_odds_match(
     sp_match: SpMatch,
     odds_matches: list[OddsMatch],
 ) -> OddsMatch | None:
-    """
-    Ищет соответствующий матч в The Odds API.
-
-    Критерии: совпадение home/away после нормализации + дата ±1 день.
-    """
+    """Find a matching Odds API line by teams (normalized) and date ±1 day."""
     parsed = parse_match_name(sp_match.name)
     if parsed is None:
         return None
@@ -66,7 +58,7 @@ def find_odds_match(
 
     if not candidates:
         logger.warning(
-            "Нет линии в The Odds API для «%s» (норм.: %s vs %s, дата %s)",
+            "No Odds API line for '%s' (norm: %s vs %s, date %s)",
             sp_match.name,
             sp_home,
             sp_away,
@@ -76,7 +68,7 @@ def find_odds_match(
 
     if len(candidates) > 1:
         logger.warning(
-            "Несколько кандидатов для «%s», берём ближайший по времени",
+            "Multiple candidates for '%s', picking closest kickoff",
             sp_match.name,
         )
         candidates.sort(
@@ -87,7 +79,7 @@ def find_odds_match(
 
     matched = candidates[0]
     logger.info(
-        "Сопоставлен «%s» ↔ %s vs %s (%s)",
+        "Matched '%s' ↔ %s vs %s (%s)",
         sp_match.name,
         matched.home_team,
         matched.away_team,

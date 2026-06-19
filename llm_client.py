@@ -1,4 +1,4 @@
-"""LLM-корректировка через OpenRouter (OpenAI-совместимый API)."""
+"""LLM adjustment via OpenRouter (OpenAI-compatible API)."""
 
 from __future__ import annotations
 
@@ -21,26 +21,26 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-LLM_SYSTEM_PROMPT = """Ты помогаешь калибровать прогнозы для футбольного турнира.
-Дают матч, вопрос по рынку и базовую вероятность из букмекерских коэффициентов.
+LLM_SYSTEM_PROMPT = """You help calibrate predictions for a football tournament.
+You receive a match, a market question, and a base probability from bookmaker odds.
 
-Проверь, есть ли у тебя достоверное знание о конкретном недавнем событии, которое рынок
-мог не успеть учесть: травма/дисквалификация ключевого игрока, неожиданный состав,
-смена тренера, форс-мажор на эту игру.
+Check whether you have reliable knowledge of a specific recent event the market
+may not have fully priced in: key player injury/suspension, unexpected lineup,
+manager change, or a one-off disruption for this match.
 
-Не корректируй из общих рассуждений о силе команд, форме или мотивации — это уже в коэффициентах.
+Do not adjust based on general talk about team strength, form, or motivation — that is already in the odds.
 
-Если такого факта нет — adjustment: 0. Не выдумывай.
+If no such fact exists — adjustment: 0. Do not guess.
 
-Ответ строго JSON, без текста вокруг:
-{"adjustment": <число от -0.05 до 0.05>, "reason": "<короткая фраза>"}"""
+Reply with JSON only, no surrounding text:
+{"adjustment": <number from -0.05 to 0.05>, "reason": "<short phrase>"}"""
 
 _JSON_BLOCK_PATTERN = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 
 @dataclass
 class LlmCallBudget:
-    """Счётчик LLM-вызовов за один прогон."""
+    """LLM call counter for a single run."""
 
     max_calls: int
     used: int = 0
@@ -63,9 +63,9 @@ def _build_user_message(
     base_probability: float,
 ) -> str:
     return (
-        f"Матч: {match_name}\n"
-        f"Рынок: {market_question}\n"
-        f"Базовая вероятность (из коэффициентов): {base_probability:.3f}"
+        f"Match: {match_name}\n"
+        f"Market: {market_question}\n"
+        f"Base probability (from odds): {base_probability:.3f}"
     )
 
 
@@ -91,12 +91,12 @@ def get_adjustment(
     *,
     client: OpenAI | None = None,
 ) -> dict[str, str | float]:
-    """Запрос к OpenRouter. При ошибке — adjustment=0, без исключения."""
+    """OpenRouter request. On error returns adjustment=0 without raising."""
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         return {
             "adjustment": 0.0,
-            "reason": "OPENROUTER_API_KEY не задан",
+            "reason": "OPENROUTER_API_KEY not set",
             "raw_response": "",
         }
 
@@ -136,7 +136,7 @@ def get_adjustment(
 
     clamped = max(-LLM_MAX_ADJUSTMENT, min(LLM_MAX_ADJUSTMENT, raw_adj))
     if clamped != raw_adj:
-        reason = f"{reason} [скорректировано до ±{LLM_MAX_ADJUSTMENT}]"
+        reason = f"{reason} [clamped to ±{LLM_MAX_ADJUSTMENT}]"
 
     return {
         "adjustment": clamped,

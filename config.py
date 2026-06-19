@@ -1,4 +1,4 @@
-"""Конфигурация и константы."""
+"""Configuration and constants."""
 
 from __future__ import annotations
 
@@ -14,13 +14,10 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 
 SPORTSPREDICT_BASE_URL = "https://api.sportspredict.com/api/v1"
 
-# type в API — UUID, ищем событие по title
+# API type field is a UUID — find the event by title instead
 PROBABILITY_CUP_TITLE_KEYWORD = "probability"
 
-# event_type у рынков в ответе /markets
 MARKET_EVENT_TYPE_PROBABILITY = "probability"
-
-# Статус открытого рынка, на который можно ставить прогноз
 MARKET_STATUS_OPEN = "open"
 
 ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
@@ -31,7 +28,7 @@ ODDS_FORMAT = "decimal"
 
 MATCH_DATE_TOLERANCE_DAYS = 1
 
-# Алиасы команд для матчинга
+# Team aliases for match mapping
 TEAM_ALIASES: dict[str, str] = {
     "usa": "usa",
     "united states": "usa",
@@ -130,10 +127,10 @@ MIN_BOOKMAKERS_FOR_ODDS = 1
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
 
-# При превышении — дальше только base_probability, без падения
+# On limit — continue with base_probability only, no crash
 MAX_LLM_CALLS_PER_RUN = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "150"))
 
-# ±0.05 = ±5 п.п.
+# ±0.05 = ±5 percentage points
 LLM_MAX_ADJUSTMENT = 0.05
 
 LLM_TEMPERATURE = 0
@@ -157,10 +154,8 @@ HTTP_MAX_RETRIES = 5
 HTTP_RETRY_BASE_DELAY_SEC = 1.0
 HTTP_RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
-RATE_LIMIT_DELAY_SEC = 1.1  # ~60 req/min на SportsPredict
+RATE_LIMIT_DELAY_SEC = 1.1  # ~60 req/min on SportsPredict
 PREDICTIONS_BATCH_SIZE = 50
-
-# Логи
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

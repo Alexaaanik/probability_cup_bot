@@ -1,4 +1,4 @@
-"""Вероятности: fair odds, LLM-поправка, shrinkage."""
+"""Probabilities: fair odds, LLM adjustment, shrinkage."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ _WIN_MARKET_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class FairProbabilities:
-    """Нормализованные вероятности исходов h2h (сумма = 1.0)."""
+    """Normalized h2h outcome probabilities (sum = 1.0)."""
 
     home_win: float
     draw: float
@@ -51,7 +51,7 @@ class LlmAdjustment:
 
 @dataclass(frozen=True)
 class ModelDecision:
-    """Полная трассировка одного решения — пишется в JSONL-лог."""
+    """Full trace of one decision — written to the JSONL log."""
 
     market_id: str
     match_name: str
@@ -78,7 +78,7 @@ def step1_fair_probabilities_from_odds(odds_match: OddsMatch) -> FairProbabiliti
         raw[outcome.name] = 1.0 / outcome.average_odds
 
     if not raw:
-        raise ValueError(f"Нет валидных коэффициентов для {odds_match.home_team}")
+        raise ValueError(f"No valid odds for {odds_match.home_team}")
 
     total = sum(raw.values())
     fair = {name: value / total for name, value in raw.items()}
@@ -90,7 +90,7 @@ def step1_fair_probabilities_from_odds(odds_match: OddsMatch) -> FairProbabiliti
     home_prob = fair.get(home_key, 0.0)
     away_prob = fair.get(away_key, 0.0)
 
-    # Иногда имя в outcomes не совпадает буквально — ищем по нормализации
+    # Outcome names may not match literally — fall back to normalization
     if home_prob == 0.0 or away_prob == 0.0:
         norm_fair = {normalize_team_name(k): v for k, v in fair.items()}
         home_prob = norm_fair.get(normalize_team_name(home_key), home_prob)
@@ -106,7 +106,7 @@ def step1_fair_probabilities_from_odds(odds_match: OddsMatch) -> FairProbabiliti
 
 
 def parse_win_market_team(question: str) -> str | None:
-    """Извлекает команду из вопроса «Will X win the match?»."""
+    """Extract the team from 'Will X win the match?'."""
     match = _WIN_MARKET_PATTERN.match(question.strip())
     if not match:
         return None
@@ -117,11 +117,7 @@ def base_probability_for_win_market(
     question: str,
     fair_probs: FairProbabilities,
 ) -> float | None:
-    """
-    Возвращает base_probability для рынка «команда X выигрывает».
-
-    Для прочих рынков (фолы, угловые и т.д.) возвращает None — нет источника odds.
-    """
+    """Base probability for a match-winner market. None for other market types."""
     team_in_question = parse_win_market_team(question)
     if team_in_question is None:
         return None
@@ -136,7 +132,7 @@ def base_probability_for_win_market(
         return fair_probs.away_win
 
     logger.warning(
-        "Команда «%s» из вопроса не совпала с %s / %s",
+        "Team '%s' from question did not match %s / %s",
         team_in_question,
         fair_probs.home_team,
         fair_probs.away_team,
@@ -153,7 +149,7 @@ def step3_llm_adjustment(
     llm_budget: LlmCallBudget,
     openrouter_client: OpenAI | None,
 ) -> LlmAdjustment:
-    """LLM-поправка. Без ключа, с --skip-llm или при лимите — adjustment = 0."""
+    """LLM adjustment. Without key, --skip-llm, or on limit — adjustment = 0."""
     if skip_llm:
         return LlmAdjustment(
             adjustment=0.0,
@@ -165,7 +161,7 @@ def step3_llm_adjustment(
     if openrouter_client is None:
         return LlmAdjustment(
             adjustment=0.0,
-            reason="OPENROUTER_API_KEY не задан",
+            reason="OPENROUTER_API_KEY not set",
             llm_called=False,
             llm_raw_response="",
         )
@@ -173,7 +169,7 @@ def step3_llm_adjustment(
     if not llm_budget.can_call():
         if not llm_budget.limit_logged:
             logger.warning(
-                "Достигнут лимит LLM-вызовов (%d/%d) — дальше только base_probability",
+                "LLM call limit reached (%d/%d) — using base_probability only",
                 llm_budget.used,
                 llm_budget.max_calls,
             )
@@ -202,7 +198,7 @@ def step3_llm_adjustment(
 
 
 def step4_apply_shrinkage(adjusted_probability: float) -> float:
-    """Сжатие к 0.5 перед отправкой."""
+    """Shrink toward 0.5 before submission."""
     return PROBABILITY_CENTER + (
         (adjusted_probability - PROBABILITY_CENTER) * SHRINKAGE_FACTOR
     )
@@ -213,7 +209,7 @@ def clamp_probability(probability: float) -> float:
 
 
 def to_api_probability(probability: float) -> int:
-    """Округляет до целого 1–99 для SportsPredict API."""
+    """Round to integer 1–99 for the SportsPredict API."""
     clamped = clamp_probability(probability)
     api_value = round(clamped * 100)
     return max(API_PROB_MIN, min(API_PROB_MAX, api_value))
@@ -255,13 +251,13 @@ def build_decision_for_market(
     llm_budget: LlmCallBudget,
     openrouter_client: OpenAI | None,
 ) -> ModelDecision:
-    """Собирает полное решение по одному рынку."""
+    """Build a full decision for one market."""
     if market_status != MARKET_STATUS_OPEN:
         return _skipped_decision(
             market_id=market_id,
             match_name=match_name,
             question=question,
-            skip_reason=f"рынок не open (status={market_status})",
+            skip_reason=f"market not open (status={market_status})",
         )
 
     if fair_probs is None:
@@ -269,7 +265,7 @@ def build_decision_for_market(
             market_id=market_id,
             match_name=match_name,
             question=question,
-            skip_reason="нет сопоставленного матча в The Odds API",
+            skip_reason="no matching match in The Odds API",
         )
 
     base = base_probability_for_win_market(question, fair_probs)
@@ -278,7 +274,7 @@ def build_decision_for_market(
             market_id=market_id,
             match_name=match_name,
             question=question,
-            skip_reason="не рынок «победа в матче» — нет h2h-коэффициентов",
+            skip_reason="not a match-winner market — no h2h odds",
         )
 
     llm = step3_llm_adjustment(

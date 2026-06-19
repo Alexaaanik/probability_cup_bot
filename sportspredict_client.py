@@ -1,4 +1,4 @@
-"""Клиент SportsPredict API — Probability Cup."""
+"""SportsPredict API client — Probability Cup."""
 
 from __future__ import annotations
 
@@ -72,11 +72,7 @@ class SportsPredictClient:
         return response.json() if response.content else {}
 
     def find_probability_cup_event(self) -> SpEvent:
-        """
-        Находит событие Probability Cup.
-
-        В API поле type — UUID, поэтому ищем по title (содержит «probability»).
-        """
+        """Find the Probability Cup event by title (API type field is a UUID)."""
         events: list[dict[str, Any]] = self._get("/events")
         for event in events:
             title = str(event.get("title", "")).lower()
@@ -87,7 +83,7 @@ class SportsPredictClient:
                     status=event.get("status", ""),
                 )
         raise LookupError(
-            f"Событие Probability Cup не найдено среди {len(events)} events"
+            f"Probability Cup event not found among {len(events)} events"
         )
 
     def get_lobbies(self, event_id: str) -> list[SpLobby]:
@@ -102,14 +98,14 @@ class SportsPredictClient:
         ]
 
     def join_lobby(self, lobby_id: str) -> None:
-        """Вступает в лобби. 409 если уже участник — это нормально."""
+        """Join a lobby. 409 if already a member is fine."""
         url = f"{SPORTSPREDICT_BASE_URL}/lobbies/{lobby_id}/join"
         try:
             request_with_retry("POST", url, headers=self._headers, json_body={})
-            logger.info("Вступили в лобби %s", lobby_id)
+            logger.info("Joined lobby %s", lobby_id)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 409:
-                logger.info("Уже в лобби %s (409), пропуск", lobby_id)
+                logger.info("Already in lobby %s (409), skipping", lobby_id)
                 return
             raise
 

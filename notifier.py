@@ -1,4 +1,4 @@
-"""Отправка уведомлений в Telegram."""
+"""Telegram notifications."""
 
 from __future__ import annotations
 
@@ -21,14 +21,10 @@ def _telegram_configured() -> tuple[str, str] | None:
 
 
 def send_telegram_message(text: str) -> bool:
-    """
-    POST sendMessage. Если токен/chat_id не заданы — пропуск без ошибки.
-
-    Возвращает True при успешной отправке.
-    """
+    """POST sendMessage. Skips silently if token/chat_id are missing."""
     config = _telegram_configured()
     if config is None:
-        logger.info("Telegram не настроен (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID) — пропуск")
+        logger.info("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID) — skipping")
         return False
 
     token, chat_id = config
@@ -46,8 +42,8 @@ def send_telegram_message(text: str) -> bool:
         )
         if response.status_code == 200:
             return True
-        logger.warning("Telegram API вернул %s: %s", response.status_code, response.text[:200])
+        logger.warning("Telegram API returned %s: %s", response.status_code, response.text[:200])
     except Exception as exc:
-        logger.warning("Не удалось отправить Telegram-сообщение: %s", exc)
+        logger.warning("Failed to send Telegram message: %s", exc)
 
     return False

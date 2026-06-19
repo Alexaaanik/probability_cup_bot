@@ -1,8 +1,4 @@
-"""
-Синхронизация GET /results с локальным predictions.jsonl по market_id.
-
-Используется daily_report.py и для накопления статистики Brier.
-"""
+"""Sync GET /results with local predictions.jsonl by market_id."""
 
 from __future__ import annotations
 
@@ -36,7 +32,7 @@ class SyncedResult:
 
 
 def load_predictions_by_market(log_path: Path) -> dict[str, dict[str, Any]]:
-    """Последняя запись по каждому market_id из predictions.jsonl."""
+    """Latest record per market_id from predictions.jsonl."""
     if not log_path.exists():
         return {}
 
@@ -110,9 +106,7 @@ def sync_results(
     predictions_path: Path | None = None,
     sync_path: Path | None = None,
 ) -> list[SyncedResult]:
-    """
-    Дёргает GET /results, сопоставляет с predictions.jsonl, дописывает новые строки.
-    """
+    """Fetch /results, match to predictions.jsonl, append new rows."""
     predictions_path = predictions_path or (LOGS_DIR / PREDICTION_LOG_FILENAME)
     sync_path = sync_path or (LOGS_DIR / RESULTS_SYNC_FILENAME)
 
@@ -133,7 +127,7 @@ def sync_results(
 
         pred = predictions.get(market_id)
         if pred is None or pred.get("api_probability") is None:
-            logger.debug("Нет локального прогноза для market_id=%s", market_id)
+            logger.debug("No local prediction for market_id=%s", market_id)
             continue
 
         new_rows.append(
@@ -151,9 +145,9 @@ def sync_results(
 
     if new_rows:
         append_synced_results(new_rows, sync_path)
-        logger.info("Синхронизировано %d новых результатов", len(new_rows))
+        logger.info("Synced %d new results", len(new_rows))
     else:
-        logger.info("Новых результатов для синхронизации нет")
+        logger.info("No new results to sync")
 
     return new_rows
 
@@ -191,13 +185,13 @@ def main() -> None:
 
     sp_key = os.getenv("SPORTSPREDICT_API_KEY", "").strip()
     if not sp_key:
-        raise ValueError("SPORTSPREDICT_API_KEY не задан")
+        raise ValueError("SPORTSPREDICT_API_KEY not set")
 
     client = SportsPredictClient(sp_key)
     event = client.find_probability_cup_event()
     lobbies = client.get_lobbies(event.id)
     if not lobbies:
-        raise RuntimeError("Нет лобби")
+        raise RuntimeError("No lobbies found")
 
     sync_results(client, lobbies[0].id)
 

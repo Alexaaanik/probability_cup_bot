@@ -1,4 +1,4 @@
-"""Общие утилиты: HTTP с retry, логирование."""
+"""Shared utilities: HTTP with retry, logging."""
 
 from __future__ import annotations
 
@@ -30,11 +30,7 @@ def request_with_retry(
     params: dict[str, Any] | None = None,
     json_body: dict[str, Any] | None = None,
 ) -> httpx.Response:
-    """
-    Выполняет HTTP-запрос с exponential backoff при сетевых сбоях и 429/5xx.
-
-    Не падает на первой ошибке — повторяет до HTTP_MAX_RETRIES раз.
-    """
+    """HTTP request with exponential backoff on network errors and 429/5xx."""
     logger = logging.getLogger("http")
     last_error: Exception | None = None
 
@@ -52,7 +48,7 @@ def request_with_retry(
             if response.status_code in HTTP_RETRY_STATUS_CODES:
                 delay = HTTP_RETRY_BASE_DELAY_SEC * (2**attempt)
                 logger.warning(
-                    "HTTP %s для %s %s, повтор через %.1f с (попытка %d/%d)",
+                    "HTTP %s for %s %s, retry in %.1fs (attempt %d/%d)",
                     response.status_code,
                     method,
                     url,
@@ -70,7 +66,7 @@ def request_with_retry(
             last_error = exc
             delay = HTTP_RETRY_BASE_DELAY_SEC * (2**attempt)
             logger.warning(
-                "Сетевая ошибка %s: %s, повтор через %.1f с (попытка %d/%d)",
+                "Network error %s: %s, retry in %.1fs (attempt %d/%d)",
                 method,
                 exc,
                 delay,
@@ -81,4 +77,4 @@ def request_with_retry(
 
     if last_error is not None:
         raise last_error
-    raise RuntimeError(f"Не удалось выполнить запрос {method} {url} после {HTTP_MAX_RETRIES} попыток")
+    raise RuntimeError(f"Request failed {method} {url} after {HTTP_MAX_RETRIES} attempts")

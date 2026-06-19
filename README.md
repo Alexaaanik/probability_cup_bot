@@ -1,44 +1,44 @@
 # Probability Cup Bot
 
-Скрипт для [Jump Trading Probability Cup](https://sportspredict.com) на ЧМ-2026: тянет букмекерские линии, сопоставляет матчи с рынками турнира, при необходимости чуть подкручивает вероятность через LLM и шлёт прогнозы в API.
+Script for the [Jump Trading Probability Cup](https://sportspredict.com) at the 2026 World Cup: pulls bookmaker lines, maps matches to tournament markets, optionally nudges probabilities via LLM, and submits predictions to the API.
 
-Модель простая: коэффициенты → матчинг по названиям команд → опциональная LLM-поправка (±5 п.п., только если есть конкретные новости) → shrinkage к 50% → POST в SportsPredict.
+Pipeline: odds → team name matching → optional LLM adjustment (±5 pp, news only) → shrinkage toward 50% → POST to SportsPredict.
 
-## Что внутри
+## Layout
 
 ```
 probability_cup_bot/
-├── main.py                 # основной прогон
-├── config.py               # константы и алиасы команд
+├── main.py                 # main run
+├── config.py               # constants and team aliases
 ├── odds_client.py          # The Odds API
 ├── sportspredict_client.py # SportsPredict API
-├── matcher.py              # сопоставление матчей
-├── model.py                # вероятности и shrinkage
+├── matcher.py              # match mapping
+├── model.py                # probabilities and shrinkage
 ├── llm_client.py           # OpenRouter
 ├── notifier.py             # Telegram
-├── sync_results.py         # подтягивание Brier из /results
-├── daily_report.py         # ежедневная сводка
+├── sync_results.py         # Brier scores from /results
+├── daily_report.py         # daily summary
 ├── utils.py
-├── logs/                   # predictions.jsonl, results_sync.jsonl (локально)
+├── logs/                   # predictions.jsonl, results_sync.jsonl (local)
 ├── .env.example
 └── requirements.txt
 ```
 
-## Настройка
+## Setup
 
-Скопируй `.env.example` в `.env` и заполни ключи:
+Copy `.env.example` to `.env` and fill in your keys:
 
-| Переменная | Нужна? | Где взять |
-|------------|--------|-----------|
-| `SPORTSPREDICT_API_KEY` | да | Probability Cup / SportsPredict (`sp_live_...`) |
-| `THE_ODDS_API_KEY` | да | [the-odds-api.com](https://the-odds-api.com) |
-| `OPENROUTER_API_KEY` | нет | [openrouter.ai](https://openrouter.ai) |
-| `OPENROUTER_MODEL` | нет | по умолчанию `anthropic/claude-haiku-4.5` |
-| `MAX_LLM_CALLS_PER_RUN` | нет | лимит вызовов за прогон, дефолт `150` |
-| `TELEGRAM_BOT_TOKEN` | нет | [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | нет | свой chat id |
+| Variable | Required | Where to get it |
+|----------|----------|-----------------|
+| `SPORTSPREDICT_API_KEY` | yes | Probability Cup / SportsPredict (`sp_live_...`) |
+| `THE_ODDS_API_KEY` | yes | [the-odds-api.com](https://the-odds-api.com) |
+| `OPENROUTER_API_KEY` | no | [openrouter.ai](https://openrouter.ai) |
+| `OPENROUTER_MODEL` | no | default `anthropic/claude-haiku-4.5` |
+| `MAX_LLM_CALLS_PER_RUN` | no | LLM calls per run, default `150` |
+| `TELEGRAM_BOT_TOKEN` | no | [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | no | your chat id |
 
-Без OpenRouter бот работает только на коэффициентах — `adjustment` будет 0.
+Without OpenRouter the bot runs on odds only — `adjustment` stays 0.
 
 ```bash
 cd probability_cup_bot
@@ -47,55 +47,55 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Запуск
+## Running
 
-Сначала dry-run без отправки и без LLM:
+Dry-run without submission or LLM:
 
 ```bash
 python main.py --dry-run --skip-llm
 ```
 
-Проверить LLM на одном матче:
+Test LLM on a single match:
 
 ```bash
 python main.py --dry-run --max-matches 1
 ```
 
-Боевой прогон:
+Live run:
 
 ```bash
 python main.py
 ```
 
-Только коэффициенты, без LLM:
+Odds only, no LLM:
 
 ```bash
 python main.py --skip-llm
 ```
 
-Отдельно — синхронизация результатов и дневной отчёт:
+Sync results and daily report (separate):
 
 ```bash
 python sync_results.py
 python daily_report.py
 ```
 
-## Как считается прогноз
+## How predictions are computed
 
-1. **Коэффициенты** — средний decimal h2h по букмекерам, маржа убирается: `fair = (1/odds) / Σ(1/odds)`.
-2. **Матчинг** — нормализация названий (`USA` → `usa`, `AUS` → `australia` и т.д.) + дата ±1 день.
-3. **LLM** — Claude Haiku через OpenRouter. Промпт в `llm_client.py`, поправка не больше ±5 п.п. Если ключей нет или лимит исчерпан — шаг пропускается.
-4. **Shrinkage** — `0.5 + (p - 0.5) * 0.9`, потом округление в 1–99 для API.
+1. **Odds** — average decimal h2h across bookmakers, margin removed: `fair = (1/odds) / Σ(1/odds)`.
+2. **Matching** — normalize team names (`USA` → `usa`, `AUS` → `australia`, etc.) + date within ±1 day.
+3. **LLM** — Claude Haiku via OpenRouter. Prompt in `llm_client.py`, max adjustment ±5 pp. Skipped if no API key or budget exhausted.
+4. **Shrinkage** — `0.5 + (p - 0.5) * 0.9`, then round to 1–99 for the API.
 
-Сейчас обрабатываются только рынки вида `Will <team> win the match?`. Прочие рынки (угловые, фолы) скипаются — для них нет h2h.
+Only markets like `Will <team> win the match?` are handled. Other markets (corners, fouls, etc.) are skipped — no h2h line for those.
 
-## Логи
+## Logs
 
-`logs/predictions.jsonl` — одна строка JSON на каждое решение: base, adjustment, llm_reason, api_probability, skip_reason.
+`logs/predictions.jsonl` — one JSON line per decision: base, adjustment, llm_reason, api_probability, skip_reason.
 
-`logs/results_sync.jsonl` — сыгранные рынки с Brier score (через `sync_results.py`).
+`logs/results_sync.jsonl` — settled markets with Brier score (via `sync_results.py`).
 
-Пример записи:
+Example:
 
 ```json
 {
@@ -110,7 +110,7 @@ python daily_report.py
 
 ## Telegram
 
-После реального `main.py` (не `--dry-run`) уходит короткая сводка. `daily_report.py` — раз в день Brier за день и за турнир. Если токен не задан, скрипт просто пишет в консоль.
+After a real `main.py` run (not `--dry-run`) a short summary is sent. `daily_report.py` sends daily and tournament Brier stats. If Telegram is not configured, output goes to the console only.
 
 ## Cron
 
@@ -119,6 +119,6 @@ python daily_report.py
 0 22 * * * cd /path/to/probability_cup_bot && .venv/bin/python daily_report.py >> logs/cron_daily.log 2>&1
 ```
 
-## Версия
+## Version
 
 `config.BOT_VERSION` — `1.1.0`.

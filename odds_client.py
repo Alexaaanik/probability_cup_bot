@@ -1,4 +1,4 @@
-"""Клиент The Odds API — коэффициенты h2h на матчи ЧМ."""
+"""The Odds API client — World Cup h2h odds."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class OutcomeOdds:
-    """Средний decimal-коэффициент по всем букмекерам для одного исхода."""
+    """Average decimal odds across bookmakers for one outcome."""
 
     name: str
     average_odds: float
@@ -31,7 +31,7 @@ class OutcomeOdds:
 
 @dataclass(frozen=True)
 class OddsMatch:
-    """Матч с усреднёнными коэффициентами h2h (дом / ничья / гости)."""
+    """Match with averaged h2h odds (home / draw / away)."""
 
     id: str
     home_team: str
@@ -45,7 +45,7 @@ class OddsApiClient:
         self._api_key = api_key
 
     def fetch_world_cup_odds(self) -> list[OddsMatch]:
-        """GET /sports/soccer_fifa_world_cup/odds — список матчей с h2h."""
+        """GET /sports/soccer_fifa_world_cup/odds — matches with h2h lines."""
         url = f"{ODDS_API_BASE_URL}/sports/{ODDS_SPORT_KEY}/odds"
         params = {
             "regions": ODDS_REGIONS,
@@ -55,7 +55,7 @@ class OddsApiClient:
         }
         response = request_with_retry("GET", url, params=params)
         raw_matches: list[dict[str, Any]] = response.json()
-        logger.info("The Odds API: получено %d матчей", len(raw_matches))
+        logger.info("The Odds API: fetched %d matches", len(raw_matches))
 
         parsed: list[OddsMatch] = []
         for item in raw_matches:
@@ -68,7 +68,7 @@ class OddsApiClient:
         bookmakers = item.get("bookmakers") or []
         if len(bookmakers) < MIN_BOOKMAKERS_FOR_ODDS:
             logger.debug(
-                "Пропуск матча %s vs %s: недостаточно букмекеров (%d)",
+                "Skipping %s vs %s: not enough bookmakers (%d)",
                 item.get("home_team"),
                 item.get("away_team"),
                 len(bookmakers),

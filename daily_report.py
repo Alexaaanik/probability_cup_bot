@@ -1,4 +1,4 @@
-"""Ежедневная сводка Brier в Telegram (отдельный cron)."""
+"""Daily Brier summary to Telegram (separate cron job)."""
 
 from __future__ import annotations
 
@@ -43,19 +43,19 @@ def build_daily_report_text(report_date: date) -> str:
     total_predictions = _count_predictions_sent(LOGS_DIR / PREDICTION_LOG_FILENAME)
 
     lines = [
-        f"📊 *Probability Cup — итоги дня {report_date.isoformat()}*",
+        f"📊 *Probability Cup — daily summary {report_date.isoformat()}*",
         "",
-        f"Матчей сыграно и засчитано: {len(day_results)}",
+        f"Settled matches counted: {len(day_results)}",
     ]
 
     if day_avg is not None:
-        lines.append(f"Средний Brier нашего бота: {day_avg:.3f}")
+        lines.append(f"Average Brier today: {day_avg:.3f}")
     else:
-        lines.append("Средний Brier нашего бота: н/д (нет сыгранных матчей)")
+        lines.append("Average Brier today: n/a (no settled matches)")
 
     lines.extend(
         [
-            "_(для сравнения: 0.25 = угадывать 50/50 на всё, 0 = идеально)_",
+            "_(for reference: 0.25 = always 50/50, 0 = perfect)_",
             "",
         ]
     )
@@ -63,22 +63,22 @@ def build_daily_report_text(report_date: date) -> str:
     if day_results:
         best = min(day_results, key=lambda r: r.brier_score)
         worst = max(day_results, key=lambda r: r.brier_score)
-        lines.append(f"Лучший прогноз дня: {best.match_name} — Brier {best.brier_score:.3f}")
-        lines.append(f"Худший прогноз дня: {worst.match_name} — Brier {worst.brier_score:.3f}")
+        lines.append(f"Best prediction today: {best.match_name} — Brier {best.brier_score:.3f}")
+        lines.append(f"Worst prediction today: {worst.match_name} — Brier {worst.brier_score:.3f}")
     else:
-        lines.append("Лучший/худший прогноз дня: н/д")
+        lines.append("Best/worst prediction today: n/a")
 
     lines.extend(
         [
             "",
-            f"Прогнозов всего отправлено с начала турнира: {total_predictions}",
+            f"Total predictions submitted this tournament: {total_predictions}",
         ]
     )
 
     if tournament_avg is not None:
-        lines.append(f"Средний Brier за весь турнир: {tournament_avg:.3f}")
+        lines.append(f"Tournament average Brier: {tournament_avg:.3f}")
     else:
-        lines.append("Средний Brier за весь турнир: н/д")
+        lines.append("Tournament average Brier: n/a")
 
     return "\n".join(lines)
 
@@ -91,7 +91,7 @@ def run(report_date: date | None = None) -> int:
 
     sp_key = os.getenv("SPORTSPREDICT_API_KEY", "").strip()
     if not sp_key:
-        logger.error("SPORTSPREDICT_API_KEY не задан")
+        logger.error("SPORTSPREDICT_API_KEY not set")
         return 1
 
     try:
@@ -99,20 +99,20 @@ def run(report_date: date | None = None) -> int:
         event = client.find_probability_cup_event()
         lobbies = client.get_lobbies(event.id)
         if not lobbies:
-            logger.error("Нет лобби")
+            logger.error("No lobbies found")
             return 1
 
         sync_results(client, lobbies[0].id)
         text = build_daily_report_text(report_date)
         send_telegram_message(text)
-        logger.info("Ежедневный отчёт сформирован за %s", report_date)
+        logger.info("Daily report built for %s", report_date)
         return 0
     except Exception as exc:
-        logger.exception("Ошибка daily_report: %s", exc)
+        logger.exception("daily_report error: %s", exc)
         send_telegram_message(
-            f"⚠️ *Probability Cup — ежедневный отчёт*\n\n"
-            f"Что-то пошло не так при формировании отчёта за {report_date}. "
-            f"Детали в логах на сервере."
+            f"⚠️ *Probability Cup — daily report*\n\n"
+            f"Failed to build report for {report_date}. "
+            f"Check server logs for details."
         )
         return 1
 

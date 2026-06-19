@@ -1,4 +1,4 @@
-"""Точка входа: загрузка матчей, расчёт прогнозов, отправка в API."""
+"""Entry point: load matches, compute predictions, submit to API."""
 
 from __future__ import annotations
 
@@ -54,9 +54,9 @@ def load_settings() -> tuple[str, str, str | None]:
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip() or None
 
     if not sp_key:
-        raise ValueError("SPORTSPREDICT_API_KEY не задан в .env")
+        raise ValueError("SPORTSPREDICT_API_KEY not set in .env")
     if not odds_key:
-        raise ValueError("THE_ODDS_API_KEY не задан в .env")
+        raise ValueError("THE_ODDS_API_KEY not set in .env")
 
     return sp_key, odds_key, openrouter_key
 
@@ -73,7 +73,7 @@ def append_prediction_log(decisions: list[ModelDecision], log_path: Path) -> Non
 
 def _format_pct(probability: float | None) -> str:
     if probability is None:
-        return "н/д"
+        return "n/a"
     return f"{round(probability * 100)}%"
 
 
@@ -87,32 +87,32 @@ def _format_adj(adjustment: float) -> str:
 def build_run_summary_telegram(stats: RunStats, *, max_llm_calls: int) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
-        f"🎯 *Probability Cup — прогон {now}*",
+        f"🎯 *Probability Cup — run {now}*",
         "",
-        f"Обработано матчей: {stats.matches_processed}",
-        f"Рынков с прогнозом: {stats.predictions_sent} (win-рынки)",
-        f"Рынков пропущено: {stats.markets_skipped_no_h2h} (нет h2h-коэффициентов)",
+        f"Matches processed: {stats.matches_processed}",
+        f"Markets predicted: {stats.predictions_sent} (win markets)",
+        f"Markets skipped: {stats.markets_skipped_no_h2h} (no h2h odds)",
         (
-            f"LLM-корректировок применено: {stats.llm_adjustments_applied} "
-            f"из {stats.llm_calls} вызовов"
+            f"LLM adjustments applied: {stats.llm_adjustments_applied} "
+            f"of {stats.llm_calls} calls"
         ),
-        f"Лимит LLM-вызовов: {stats.llm_calls}/{max_llm_calls}",
+        f"LLM call budget: {stats.llm_calls}/{max_llm_calls}",
         "",
-        "Примеры прогнозов:",
+        "Sample predictions:",
     ]
 
     if stats.examples:
         lines.extend(stats.examples)
     else:
-        lines.append("— нет отправленных прогнозов")
+        lines.append("— none submitted")
 
     lines.append("")
     if stats.errors:
-        lines.append(f"Ошибок: {len(stats.errors)}")
+        lines.append(f"Errors: {len(stats.errors)}")
         for err in stats.errors[:3]:
             lines.append(f"• {err}")
     else:
-        lines.append("Ошибок: 0")
+        lines.append("Errors: 0")
 
     return "\n".join(lines)
 
@@ -129,37 +129,37 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
     openrouter_client: OpenAI | None = None
 
     if skip_llm:
-        logger.info("Флаг --skip-llm: LLM-корректировка отключена")
+        logger.info("--skip-llm: LLM adjustment disabled")
     elif openrouter_key:
         openrouter_client = OpenAI(
             base_url=OPENROUTER_BASE_URL,
             api_key=openrouter_key,
         )
     else:
-        logger.warning("OPENROUTER_API_KEY не задан — LLM отключён")
+        logger.warning("OPENROUTER_API_KEY not set — LLM disabled")
 
     event = sp_client.find_probability_cup_event()
-    logger.info("Событие: %s (%s)", event.title, event.id)
+    logger.info("Event: %s (%s)", event.title, event.id)
 
     lobbies = sp_client.get_lobbies(event.id)
     if not lobbies:
-        logger.error("Нет лобби для event_id=%s", event.id)
-        stats.errors.append("не найдено лобби для события")
+        logger.error("No lobby for event_id=%s", event.id)
+        stats.errors.append("no lobby found for event")
         return 1
 
     lobby = lobbies[0]
-    logger.info("Лобби: %s (joined=%s)", lobby.name, lobby.joined)
+    logger.info("Lobby: %s (joined=%s)", lobby.name, lobby.joined)
 
     if not lobby.joined and not dry_run:
         sp_client.join_lobby(lobby.id)
     elif not lobby.joined:
-        logger.info("[dry-run] Пропуск join лобби %s", lobby.id)
+        logger.info("[dry-run] Skipping lobby join %s", lobby.id)
 
     matches = sp_client.get_matches(event.id)
     if max_matches is not None:
         matches = matches[:max_matches]
-        logger.info("Ограничение --max-matches=%d", max_matches)
-    logger.info("Матчей к обработке: %d", len(matches))
+        logger.info("--max-matches=%d", max_matches)
+    logger.info("Matches to process: %d", len(matches))
 
     odds_matches = odds_client.fetch_world_cup_odds()
     all_decisions: list[ModelDecision] = []
@@ -167,7 +167,7 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
 
     for index, sp_match in enumerate(matches):
         if sp_match.open_market_count == 0:
-            logger.info("Пропуск %s: open_market_count=0", sp_match.name)
+            logger.info("Skipping %s: open_market_count=0", sp_match.name)
             continue
 
         stats.matches_processed += 1
@@ -178,8 +178,8 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
         try:
             markets = sp_client.get_markets(lobby.id, sp_match.id)
         except Exception as exc:
-            logger.warning("Ошибка загрузки рынков для %s: %s", sp_match.name, exc)
-            stats.errors.append(f"рынки {sp_match.name}: сбой загрузки")
+            logger.warning("Failed to load markets for %s: %s", sp_match.name, exc)
+            stats.errors.append(f"markets {sp_match.name}: load failed")
             continue
 
         odds_match = find_odds_match(sp_match, odds_matches)
@@ -241,8 +241,8 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
             if len(stats.examples) < 5:
                 stats.examples.append(
                     f"{decision.match_name}: {decision.api_probability}% "
-                    f"(база {_format_pct(decision.base_probability)}, "
-                    f"корр. {_format_adj(decision.adjustment)})"
+                    f"(base {_format_pct(decision.base_probability)}, "
+                    f"adj {_format_adj(decision.adjustment)})"
                 )
 
     stats.llm_calls = llm_budget.used
@@ -250,22 +250,22 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
 
     log_path = LOGS_DIR / PREDICTION_LOG_FILENAME
     append_prediction_log(all_decisions, log_path)
-    logger.info("Записано %d решений в %s", len(all_decisions), log_path)
+    logger.info("Wrote %d decisions to %s", len(all_decisions), log_path)
 
     try:
         sync_results(sp_client, lobby.id)
     except Exception as exc:
-        logger.warning("Не удалось синхронизировать /results: %s", exc)
-        stats.errors.append("синхронизация результатов не удалась")
+        logger.warning("Failed to sync /results: %s", exc)
+        stats.errors.append("results sync failed")
 
     if not predictions:
-        logger.warning("Нет прогнозов для отправки")
+        logger.warning("No predictions to submit")
         if not dry_run:
             send_telegram_message(build_run_summary_telegram(stats, max_llm_calls=MAX_LLM_CALLS_PER_RUN))
         return 0
 
     if dry_run:
-        logger.info("[dry-run] Было бы отправлено %d прогнозов:", len(predictions))
+        logger.info("[dry-run] Would submit %d predictions:", len(predictions))
         for payload in predictions:
             logger.info(
                 "  market_id=%s lobby_id=%s probability=%d",
@@ -280,40 +280,40 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
         try:
             result = sp_client.submit_predictions_batch(batch)
             logger.info(
-                "Отправлен батч %d–%d (%d шт.): %s",
+                "Submitted batch %d–%d (%d items): %s",
                 batch_start + 1,
                 batch_start + len(batch),
                 len(batch),
                 result,
             )
         except Exception as exc:
-            logger.error("Ошибка отправки батча: %s", exc)
-            stats.errors.append("отправка прогнозов прервана")
+            logger.error("Batch submit failed: %s", exc)
+            stats.errors.append("prediction submit aborted")
 
-    logger.info("Готово: отправлено %d прогнозов", len(predictions))
+    logger.info("Done: submitted %d predictions", len(predictions))
     send_telegram_message(build_run_summary_telegram(stats, max_llm_calls=MAX_LLM_CALLS_PER_RUN))
     return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Probability Cup — автоматические прогнозы через SportsPredict API",
+        description="Probability Cup — automated predictions via SportsPredict API",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Посчитать и залогировать, но не отправлять POST /predictions/batch",
+        help="Compute and log without POST /predictions/batch",
     )
     parser.add_argument(
         "--skip-llm",
         action="store_true",
-        help="Пропустить вызов OpenRouter (adjustment=0)",
+        help="Skip OpenRouter calls (adjustment=0)",
     )
     parser.add_argument(
         "--max-matches",
         type=int,
         default=None,
-        help="Ограничить число матчей (для отладки)",
+        help="Limit number of matches (debug)",
     )
     return parser.parse_args(argv)
 
@@ -327,10 +327,10 @@ def main() -> None:
             max_matches=args.max_matches,
         )
     except Exception as exc:
-        logging.exception("Критическая ошибка: %s", exc)
+        logging.exception("Fatal error: %s", exc)
         send_telegram_message(
-            "⚠️ *Probability Cup — прогон*\n\n"
-            "Что-то пошло не так при выполнении скрипта. Детали в логах на сервере."
+            "⚠️ *Probability Cup — run*\n\n"
+            "Something went wrong. Check server logs for details."
         )
         exit_code = 1
     sys.exit(exit_code)
