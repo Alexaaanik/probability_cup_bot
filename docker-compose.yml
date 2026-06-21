@@ -1,0 +1,9 @@
+services:
+  probability-cup-bot:
+    build: .
+    container_name: probability_cup_bot
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    restart: "no"

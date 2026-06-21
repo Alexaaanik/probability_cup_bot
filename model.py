@@ -15,7 +15,11 @@ from config import (
     MARKET_STATUS_OPEN,
     MAX_PROBABILITY,
     MIN_PROBABILITY,
+    NO_ODDS_BASE_PROBABILITY,
     PROBABILITY_CENTER,
+    PROP_BASE_PROBABILITY,
+    PROP_LLM_MAX_ADJUSTMENT,
+    PROP_SHRINKAGE_FACTOR,
     SHRINKAGE_FACTOR,
 )
 from llm_client import LlmCallBudget, get_adjustment
@@ -56,6 +60,7 @@ class ModelDecision:
     market_id: str
     match_name: str
     question: str
+    market_kind: str
     base_probability: float | None
     adjustment: float
     adjustment_reason: str
@@ -63,6 +68,7 @@ class ModelDecision:
     shrunk_probability: float | None
     api_probability: int | None
     skipped: bool
+    pending: bool
     skip_reason: str
     llm_called: bool
     llm_reason: str
@@ -90,7 +96,6 @@ def step1_fair_probabilities_from_odds(odds_match: OddsMatch) -> FairProbabiliti
     home_prob = fair.get(home_key, 0.0)
     away_prob = fair.get(away_key, 0.0)
 
-    # Outcome names may not match literally — fall back to normalization
     if home_prob == 0.0 or away_prob == 0.0:
         norm_fair = {normalize_team_name(k): v for k, v in fair.items()}
         home_prob = norm_fair.get(normalize_team_name(home_key), home_prob)
@@ -111,6 +116,10 @@ def parse_win_market_team(question: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip()
+
+
+def is_win_market(question: str) -> bool:
+    return parse_win_market_team(question) is not None
 
 
 def base_probability_for_win_market(
@@ -148,6 +157,7 @@ def step3_llm_adjustment(
     skip_llm: bool,
     llm_budget: LlmCallBudget,
     openrouter_client: OpenAI | None,
+    max_adjustment: float = LLM_MAX_ADJUSTMENT,
 ) -> LlmAdjustment:
     """LLM adjustment. Without key, --skip-llm, or on limit — adjustment = 0."""
     if skip_llm:
@@ -189,19 +199,29 @@ def step3_llm_adjustment(
     )
     llm_budget.record_call()
 
+    raw_adj = float(result["adjustment"])
+    clamped = max(-max_adjustment, min(max_adjustment, raw_adj))
+    reason = str(result["reason"])
+    if clamped != raw_adj:
+        reason = f"{reason} [clamped to ±{max_adjustment}]"
+
     return LlmAdjustment(
-        adjustment=float(result["adjustment"]),
-        reason=str(result["reason"]),
+        adjustment=clamped,
+        reason=reason,
         llm_called=True,
         llm_raw_response=str(result.get("raw_response", "")),
     )
 
 
-def step4_apply_shrinkage(adjusted_probability: float) -> float:
+def apply_shrinkage(adjusted_probability: float, *, factor: float) -> float:
     """Shrink toward 0.5 before submission."""
     return PROBABILITY_CENTER + (
-        (adjusted_probability - PROBABILITY_CENTER) * SHRINKAGE_FACTOR
+        (adjusted_probability - PROBABILITY_CENTER) * factor
     )
+
+
+def step4_apply_shrinkage(adjusted_probability: float) -> float:
+    return apply_shrinkage(adjusted_probability, factor=SHRINKAGE_FACTOR)
 
 
 def clamp_probability(probability: float) -> float:
@@ -220,12 +240,14 @@ def _skipped_decision(
     market_id: str,
     match_name: str,
     question: str,
+    market_kind: str,
     skip_reason: str,
 ) -> ModelDecision:
     return ModelDecision(
         market_id=market_id,
         match_name=match_name,
         question=question,
+        market_kind=market_kind,
         base_probability=None,
         adjustment=0.0,
         adjustment_reason="",
@@ -233,10 +255,46 @@ def _skipped_decision(
         shrunk_probability=None,
         api_probability=None,
         skipped=True,
+        pending=False,
         skip_reason=skip_reason,
         llm_called=False,
         llm_reason="",
         llm_raw_response="",
+    )
+
+
+def _finalize_decision(
+    *,
+    market_id: str,
+    match_name: str,
+    question: str,
+    market_kind: str,
+    base: float,
+    llm: LlmAdjustment,
+    shrinkage_factor: float,
+    pending: bool = False,
+) -> ModelDecision:
+    adjusted = clamp_probability(base + llm.adjustment)
+    shrunk = apply_shrinkage(adjusted, factor=shrinkage_factor)
+    api_prob = to_api_probability(shrunk)
+
+    return ModelDecision(
+        market_id=market_id,
+        match_name=match_name,
+        question=question,
+        market_kind=market_kind,
+        base_probability=base,
+        adjustment=llm.adjustment,
+        adjustment_reason=llm.reason,
+        adjusted_probability=adjusted,
+        shrunk_probability=shrunk,
+        api_probability=api_prob,
+        skipped=False,
+        pending=pending,
+        skip_reason="pending_no_odds" if pending else "",
+        llm_called=llm.llm_called,
+        llm_reason=llm.reason,
+        llm_raw_response=llm.llm_raw_response,
     )
 
 
@@ -252,20 +310,68 @@ def build_decision_for_market(
     openrouter_client: OpenAI | None,
 ) -> ModelDecision:
     """Build a full decision for one market."""
+    market_kind = "win" if is_win_market(question) else "prop"
+
     if market_status != MARKET_STATUS_OPEN:
         return _skipped_decision(
             market_id=market_id,
             match_name=match_name,
             question=question,
+            market_kind=market_kind,
             skip_reason=f"market not open (status={market_status})",
         )
 
-    if fair_probs is None:
-        return _skipped_decision(
+    if market_kind == "win":
+        return _build_win_decision(
             market_id=market_id,
             match_name=match_name,
             question=question,
-            skip_reason="no matching match in The Odds API",
+            fair_probs=fair_probs,
+            skip_llm=skip_llm,
+            llm_budget=llm_budget,
+            openrouter_client=openrouter_client,
+        )
+
+    return _build_prop_decision(
+        market_id=market_id,
+        match_name=match_name,
+        question=question,
+        fair_probs=fair_probs,
+        skip_llm=skip_llm,
+        llm_budget=llm_budget,
+        openrouter_client=openrouter_client,
+    )
+
+
+def _build_win_decision(
+    *,
+    market_id: str,
+    match_name: str,
+    question: str,
+    fair_probs: FairProbabilities | None,
+    skip_llm: bool,
+    llm_budget: LlmCallBudget,
+    openrouter_client: OpenAI | None,
+) -> ModelDecision:
+    if fair_probs is None:
+        llm = step3_llm_adjustment(
+            match_name=match_name,
+            market_question=question,
+            base_probability=NO_ODDS_BASE_PROBABILITY,
+            skip_llm=skip_llm,
+            llm_budget=llm_budget,
+            openrouter_client=openrouter_client,
+            max_adjustment=PROP_LLM_MAX_ADJUSTMENT,
+        )
+        return _finalize_decision(
+            market_id=market_id,
+            match_name=match_name,
+            question=question,
+            market_kind="win",
+            base=NO_ODDS_BASE_PROBABILITY,
+            llm=llm,
+            shrinkage_factor=PROP_SHRINKAGE_FACTOR,
+            pending=True,
         )
 
     base = base_probability_for_win_market(question, fair_probs)
@@ -274,7 +380,8 @@ def build_decision_for_market(
             market_id=market_id,
             match_name=match_name,
             question=question,
-            skip_reason="not a match-winner market — no h2h odds",
+            market_kind="win",
+            skip_reason="team from question did not match odds line",
         )
 
     llm = step3_llm_adjustment(
@@ -285,23 +392,44 @@ def build_decision_for_market(
         llm_budget=llm_budget,
         openrouter_client=openrouter_client,
     )
-    adjusted = clamp_probability(base + llm.adjustment)
-    shrunk = step4_apply_shrinkage(adjusted)
-    api_prob = to_api_probability(shrunk)
-
-    return ModelDecision(
+    return _finalize_decision(
         market_id=market_id,
         match_name=match_name,
         question=question,
+        market_kind="win",
+        base=base,
+        llm=llm,
+        shrinkage_factor=SHRINKAGE_FACTOR,
+    )
+
+
+def _build_prop_decision(
+    *,
+    market_id: str,
+    match_name: str,
+    question: str,
+    fair_probs: FairProbabilities | None,
+    skip_llm: bool,
+    llm_budget: LlmCallBudget,
+    openrouter_client: OpenAI | None,
+) -> ModelDecision:
+    """Prop markets: neutral base, smaller LLM band, stronger shrinkage."""
+    base = PROP_BASE_PROBABILITY
+    llm = step3_llm_adjustment(
+        match_name=match_name,
+        market_question=question,
         base_probability=base,
-        adjustment=llm.adjustment,
-        adjustment_reason=llm.reason,
-        adjusted_probability=adjusted,
-        shrunk_probability=shrunk,
-        api_probability=api_prob,
-        skipped=False,
-        skip_reason="",
-        llm_called=llm.llm_called,
-        llm_reason=llm.reason,
-        llm_raw_response=llm.llm_raw_response,
+        skip_llm=skip_llm,
+        llm_budget=llm_budget,
+        openrouter_client=openrouter_client,
+        max_adjustment=PROP_LLM_MAX_ADJUSTMENT,
+    )
+    return _finalize_decision(
+        market_id=market_id,
+        match_name=match_name,
+        question=question,
+        market_kind="prop",
+        base=base,
+        llm=llm,
+        shrinkage_factor=PROP_SHRINKAGE_FACTOR,
     )

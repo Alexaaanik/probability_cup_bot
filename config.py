@@ -142,6 +142,14 @@ LLM_REQUEST_TIMEOUT_SEC = 60
 PROBABILITY_CENTER = 0.5
 SHRINKAGE_FACTOR = 0.9
 
+# Prop markets (corners, fouls, cards, etc.) — lower confidence, closer to 50%
+PROP_SHRINKAGE_FACTOR = 0.55
+PROP_LLM_MAX_ADJUSTMENT = 0.03
+PROP_BASE_PROBABILITY = 0.5
+
+# Win markets without Odds API line — save pending, submit when line appears
+NO_ODDS_BASE_PROBABILITY = 0.5
+
 MIN_PROBABILITY = 0.02
 MAX_PROBABILITY = 0.98
 API_PROB_MIN = 1
@@ -161,8 +169,9 @@ LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 PREDICTION_LOG_FILENAME = "predictions.jsonl"
+PENDING_DECISIONS_FILENAME = "pending_decisions.jsonl"
 RESULTS_SYNC_FILENAME = "results_sync.jsonl"
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
-BOT_VERSION = "1.1.0"
+BOT_VERSION = "1.2.0"

@@ -18,8 +18,9 @@ probability_cup_bot/
 ├── notifier.py             # Telegram
 ├── sync_results.py         # Brier scores from /results
 ├── daily_report.py         # daily summary
+├── pending_store.py        # отложенные решения без линии Odds API
 ├── utils.py
-├── logs/                   # predictions.jsonl, results_sync.jsonl (local)
+├── logs/                   # predictions.jsonl, pending_decisions.jsonl, results_sync.jsonl
 ├── .env.example
 └── requirements.txt
 ```
@@ -85,13 +86,16 @@ python daily_report.py
 1. **Odds** — average decimal h2h across bookmakers, margin removed: `fair = (1/odds) / Σ(1/odds)`.
 2. **Matching** — normalize team names (`USA` → `usa`, `AUS` → `australia`, etc.) + date within ±1 day.
 3. **LLM** — Claude Haiku via OpenRouter. Prompt in `llm_client.py`, max adjustment ±5 pp. Skipped if no API key or budget exhausted.
-4. **Shrinkage** — `0.5 + (p - 0.5) * 0.9`, then round to 1–99 for the API.
+4. **Shrinkage** — `0.5 + (p - 0.5) * 0.9` для win-рынков; для prop-рынков (углы, фолы, карточки и т.д.) — factor `0.55` (ниже уверенность, ближе к 50%).
+5. **Pending** — win-рынки без линии в The Odds API сохраняются в `logs/pending_decisions.jsonl` и пересчитываются при следующем запуске, когда линия появится.
 
-Only markets like `Will <team> win the match?` are handled. Other markets (corners, fouls, etc.) are skipped — no h2h line for those.
+Win-рынки (`Will <team> win the match?`) используют h2h-кэфы. Prop-рынки обрабатываются с нейтральной базой 50% и меньшим LLM-корridor (±3 pp).
 
 ## Logs
 
-`logs/predictions.jsonl` — one JSON line per decision: base, adjustment, llm_reason, api_probability, skip_reason.
+`logs/predictions.jsonl` — one JSON line per decision: base, adjustment, llm_reason, api_probability, market_kind, pending, skip_reason.
+
+`logs/pending_decisions.jsonl` — win-рынки без линии Odds API; пересчитываются каждые 3 часа при появлении кэфов.
 
 `logs/results_sync.jsonl` — settled markets with Brier score (via `sync_results.py`).
 
@@ -114,11 +118,20 @@ After a real `main.py` run (not `--dry-run`) a short summary is sent. `daily_rep
 
 ## Cron
 
+Автозапуск каждые 3 часа (Docker):
+
 ```cron
-0 10 * * * cd /path/to/probability_cup_bot && .venv/bin/python main.py >> logs/cron.log 2>&1
-0 22 * * * cd /path/to/probability_cup_bot && .venv/bin/python daily_report.py >> logs/cron_daily.log 2>&1
+0 */3 * * * /root/projects/probability_cup_bot/run-cron.sh
+```
+
+Логи cron: `logs/cron.log`.
+
+Ежедневный отчёт (опционально):
+
+```cron
+0 22 * * * cd /path/to/probability_cup_bot && docker compose run --rm probability-cup-bot python daily_report.py >> logs/cron_daily.log 2>&1
 ```
 
 ## Version
 
-`config.BOT_VERSION` — `1.1.0`.
+`config.BOT_VERSION` — `1.2.0`.
