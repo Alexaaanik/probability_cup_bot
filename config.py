@@ -32,6 +32,7 @@ MATCH_DATE_TOLERANCE_DAYS = 1
 TEAM_ALIASES: dict[str, str] = {
     "usa": "usa",
     "united states": "usa",
+    "united states of america": "usa",
     "aus": "australia",
     "australia": "australia",
     "sco": "scotland",
@@ -43,6 +44,8 @@ TEAM_ALIASES: dict[str, str] = {
     "haiti": "haiti",
     "tur": "turkey",
     "turkey": "turkey",
+    "türkiye": "turkey",
+    "turkiye": "turkey",
     "par": "paraguay",
     "paraguay": "paraguay",
     "ned": "netherlands",
@@ -118,6 +121,34 @@ TEAM_ALIASES: dict[str, str] = {
     "serbia": "serbia",
     "ukr": "ukraine",
     "ukraine": "ukraine",
+    "nor": "norway",
+    "norway": "norway",
+    "jor": "jordan",
+    "jordan": "jordan",
+    "alg": "algeria",
+    "algeria": "algeria",
+    "uzb": "uzbekistan",
+    "uzbekistan": "uzbekistan",
+    "pan": "panama",
+    "panama": "panama",
+    "col": "colombia",
+    "colombia": "colombia",
+    "cod": "dr congo",
+    "dr congo": "dr congo",
+    "democratic republic of the congo": "dr congo",
+    "drc": "dr congo",
+    "bih": "bosnia & herzegovina",
+    "bosnia and herzegovina": "bosnia & herzegovina",
+    "bosnia & herzegovina": "bosnia & herzegovina",
+    "rsa": "south africa",
+    "south africa": "south africa",
+    "cze": "czech republic",
+    "czech republic": "czech republic",
+    "czechia": "czech republic",
+    "irq": "iraq",
+    "iraq": "iraq",
+    "bol": "bolivia",
+    "bolivia": "bolivia",
 }
 
 MIN_BOOKMAKERS_FOR_ODDS = 1
@@ -127,8 +158,9 @@ MIN_BOOKMAKERS_FOR_ODDS = 1
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-haiku-4.5")
 
-# On limit — continue with base_probability only, no crash
-MAX_LLM_CALLS_PER_RUN = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "150"))
+# Per-run safety cap (in-memory only, resets each main.py start).
+# Sized for ~24 win + ~69 LLM-worthy prop markets per full tournament pass + 20% headroom.
+MAX_LLM_CALLS_PER_RUN = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "110"))
 
 # ±0.05 = ±5 percentage points
 LLM_MAX_ADJUSTMENT = 0.05

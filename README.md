@@ -68,6 +68,22 @@ Live run:
 python main.py
 ```
 
+### Idempotent submission (manual check)
+
+Run the same match twice — the second run should **update** existing predictions via `PATCH`, not fail with "already exists":
+
+```bash
+python main.py --max-matches 1 --skip-llm
+python main.py --max-matches 1 --skip-llm
+```
+
+Expected in logs on the **second** run:
+- `Submission plan: 0 create(s), N update(s), ...`
+- `Updated market ... (update #1)`
+- No batch of `success: false, error: already exists` without a follow-up PATCH
+
+`logs/predictions.jsonl` will include `submission_action` (`create` / `update`) and `submission_update_count`.
+
 Odds only, no LLM:
 
 ```bash

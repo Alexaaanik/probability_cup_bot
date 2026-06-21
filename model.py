@@ -33,6 +33,14 @@ _WIN_MARKET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Props where lineup/injury/discipline news can matter; skip corners, shots, offsides, etc.
+_LLM_PROP_PATTERNS = (
+    re.compile(r"\bcard", re.IGNORECASE),
+    re.compile(r"\bfoul", re.IGNORECASE),
+    re.compile(r"\bpenalty\b", re.IGNORECASE),
+    re.compile(r"\bred card\b", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class FairProbabilities:
@@ -120,6 +128,11 @@ def parse_win_market_team(question: str) -> str | None:
 
 def is_win_market(question: str) -> bool:
     return parse_win_market_team(question) is not None
+
+
+def prop_market_needs_llm(question: str) -> bool:
+    """Only discipline-related props benefit from injury/lineup LLM checks."""
+    return any(pattern.search(question) for pattern in _LLM_PROP_PATTERNS)
 
 
 def base_probability_for_win_market(
@@ -415,15 +428,23 @@ def _build_prop_decision(
 ) -> ModelDecision:
     """Prop markets: neutral base, smaller LLM band, stronger shrinkage."""
     base = PROP_BASE_PROBABILITY
-    llm = step3_llm_adjustment(
-        match_name=match_name,
-        market_question=question,
-        base_probability=base,
-        skip_llm=skip_llm,
-        llm_budget=llm_budget,
-        openrouter_client=openrouter_client,
-        max_adjustment=PROP_LLM_MAX_ADJUSTMENT,
-    )
+    if not prop_market_needs_llm(question):
+        llm = LlmAdjustment(
+            adjustment=0.0,
+            reason="prop_skip_llm",
+            llm_called=False,
+            llm_raw_response="",
+        )
+    else:
+        llm = step3_llm_adjustment(
+            match_name=match_name,
+            market_question=question,
+            base_probability=base,
+            skip_llm=skip_llm,
+            llm_budget=llm_budget,
+            openrouter_client=openrouter_client,
+            max_adjustment=PROP_LLM_MAX_ADJUSTMENT,
+        )
     return _finalize_decision(
         market_id=market_id,
         match_name=match_name,

@@ -40,7 +40,7 @@ _JSON_BLOCK_PATTERN = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 @dataclass
 class LlmCallBudget:
-    """LLM call counter for a single run."""
+    """In-memory LLM call counter for a single main.py process (not persisted)."""
 
     max_calls: int
     used: int = 0
@@ -49,6 +49,10 @@ class LlmCallBudget:
     @property
     def limit_reached(self) -> bool:
         return self.used >= self.max_calls
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.max_calls - self.used)
 
     def can_call(self) -> bool:
         return not self.limit_reached

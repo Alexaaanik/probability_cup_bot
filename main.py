@@ -22,7 +22,6 @@ from config import (
     OPENROUTER_BASE_URL,
     PENDING_DECISIONS_FILENAME,
     PREDICTION_LOG_FILENAME,
-    PREDICTIONS_BATCH_SIZE,
     RATE_LIMIT_DELAY_SEC,
 )
 from llm_client import LlmCallBudget
@@ -30,6 +29,7 @@ from matcher import find_odds_match
 from model import ModelDecision, build_decision_for_market, step1_fair_probabilities_from_odds
 from notifier import send_telegram_message
 from odds_client import OddsApiClient
+from prediction_submit import load_update_counts, submit_predictions_idempotent
 from pending_store import (
     PendingRecord,
     load_pending,
@@ -56,6 +56,9 @@ class RunStats:
     markets_skipped: int = 0
     llm_calls: int = 0
     llm_adjustments_applied: int = 0
+    predictions_created: int = 0
+    predictions_updated: int = 0
+    predictions_update_failed: int = 0
     examples: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -74,13 +77,26 @@ def load_settings() -> tuple[str, str, str | None]:
     return sp_key, odds_key, openrouter_key
 
 
-def append_prediction_log(decisions: list[ModelDecision], log_path: Path) -> None:
+def append_prediction_log(
+    decisions: list[ModelDecision],
+    log_path: Path,
+    *,
+    submission_outcomes: dict | None = None,
+) -> None:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now(timezone.utc).isoformat()
+    submission_outcomes = submission_outcomes or {}
     with log_path.open("a", encoding="utf-8") as fh:
         for decision in decisions:
             record = asdict(decision)
             record["logged_at"] = run_ts
+            outcome = submission_outcomes.get(decision.market_id)
+            if outcome is not None:
+                record["submission_action"] = outcome.action
+                record["submission_status"] = outcome.status
+                record["submission_update_count"] = outcome.update_count
+                if outcome.error:
+                    record["submission_error"] = outcome.error
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
@@ -112,10 +128,20 @@ def build_run_summary_telegram(stats: RunStats, *, max_llm_calls: int) -> str:
             f"LLM adjustments applied: {stats.llm_adjustments_applied} "
             f"of {stats.llm_calls} calls"
         ),
-        f"LLM call budget: {stats.llm_calls}/{max_llm_calls}",
+        f"LLM calls used this run: {stats.llm_calls}/{max_llm_calls}",
+    ]
+
+    if stats.predictions_created:
+        lines.append(f"Predictions created: {stats.predictions_created}")
+    if stats.predictions_updated:
+        lines.append(f"Predictions updated: {stats.predictions_updated}")
+    if stats.predictions_update_failed:
+        lines.append(f"Prediction updates failed: {stats.predictions_update_failed}")
+
+    lines.extend([
         "",
         "Sample predictions:",
-    ]
+    ])
 
     if stats.examples:
         lines.extend(stats.examples)
@@ -149,41 +175,40 @@ def _add_example(stats: RunStats, decision: ModelDecision) -> None:
     )
 
 
+def _apply_submission_stats(stats: RunStats, outcomes: dict) -> None:
+    for outcome in outcomes.values():
+        if outcome.status == "created":
+            stats.predictions_created += 1
+        elif outcome.status == "updated":
+            stats.predictions_updated += 1
+        elif outcome.status in {"update_failed_market_closed", "update_failed", "create_failed"}:
+            if outcome.status.startswith("update_failed"):
+                stats.predictions_update_failed += 1
+            stats.errors.append(
+                f"{outcome.market_id}: {outcome.status}"
+                + (f" — {outcome.error}" if outcome.error else "")
+            )
+
+
 def _submit_predictions(
     predictions: list[SpPredictionPayload],
     *,
     sp_client: SportsPredictClient,
+    lobby_id: str,
     dry_run: bool,
     stats: RunStats,
-) -> None:
-    if not predictions:
-        return
-
-    if dry_run:
-        logger.info("[dry-run] Would submit %d predictions:", len(predictions))
-        for payload in predictions:
-            logger.info(
-                "  market_id=%s lobby_id=%s probability=%d",
-                payload.market_id,
-                payload.lobby_id,
-                payload.probability,
-            )
-        return
-
-    for batch_start in range(0, len(predictions), PREDICTIONS_BATCH_SIZE):
-        batch = predictions[batch_start : batch_start + PREDICTIONS_BATCH_SIZE]
-        try:
-            result = sp_client.submit_predictions_batch(batch)
-            logger.info(
-                "Submitted batch %d–%d (%d items): %s",
-                batch_start + 1,
-                batch_start + len(batch),
-                len(batch),
-                result,
-            )
-        except Exception as exc:
-            logger.error("Batch submit failed: %s", exc)
-            stats.errors.append("prediction submit aborted")
+    log_path: Path,
+) -> dict:
+    update_counts = load_update_counts(log_path)
+    outcomes = submit_predictions_idempotent(
+        predictions,
+        sp_client=sp_client,
+        lobby_id=lobby_id,
+        dry_run=dry_run,
+        update_counts=update_counts,
+    )
+    _apply_submission_stats(stats, outcomes)
+    return outcomes
 
 
 def resolve_pending_decisions(
@@ -276,6 +301,11 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
     odds_client = OddsApiClient(odds_key)
     llm_budget = LlmCallBudget(max_calls=MAX_LLM_CALLS_PER_RUN)
     openrouter_client: OpenAI | None = None
+    logger.info(
+        "LLM call budget for this run: %d/%d available (in-memory, resets each start)",
+        llm_budget.remaining,
+        llm_budget.max_calls,
+    )
 
     if skip_llm:
         logger.info("--skip-llm: LLM adjustment disabled")
@@ -448,7 +478,25 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
     stats.predictions_sent = len(predictions)
 
     log_path = LOGS_DIR / PREDICTION_LOG_FILENAME
-    append_prediction_log(all_decisions, log_path)
+
+    submission_outcomes: dict = {}
+    if predictions:
+        submission_outcomes = _submit_predictions(
+            predictions,
+            sp_client=sp_client,
+            lobby_id=lobby.id,
+            dry_run=dry_run,
+            stats=stats,
+            log_path=log_path,
+        )
+    else:
+        logger.warning("No predictions to submit")
+
+    append_prediction_log(
+        all_decisions,
+        log_path,
+        submission_outcomes=submission_outcomes,
+    )
     logger.info("Wrote %d decisions to %s", len(all_decisions), log_path)
 
     try:
@@ -457,16 +505,14 @@ def run(*, dry_run: bool, skip_llm: bool, max_matches: int | None = None) -> int
         logger.warning("Failed to sync /results: %s", exc)
         stats.errors.append("results sync failed")
 
-    if not predictions:
-        logger.warning("No predictions to submit")
-        if not dry_run:
-            send_telegram_message(build_run_summary_telegram(stats, max_llm_calls=MAX_LLM_CALLS_PER_RUN))
-        return 0
-
-    _submit_predictions(predictions, sp_client=sp_client, dry_run=dry_run, stats=stats)
-
     if not dry_run:
-        logger.info("Done: submitted %d predictions", len(predictions))
+        logger.info(
+            "Done: %d computed, %d created, %d updated, %d update failures",
+            len(predictions),
+            stats.predictions_created,
+            stats.predictions_updated,
+            stats.predictions_update_failed,
+        )
         send_telegram_message(build_run_summary_telegram(stats, max_llm_calls=MAX_LLM_CALLS_PER_RUN))
     return 0
 

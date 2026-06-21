@@ -71,6 +71,13 @@ class SportsPredictClient:
         )
         return response.json() if response.content else {}
 
+    def _patch(self, path: str, json_body: dict[str, Any]) -> Any:
+        url = f"{SPORTSPREDICT_BASE_URL}{path}"
+        response = request_with_retry(
+            "PATCH", url, headers=self._headers, json_body=json_body
+        )
+        return response.json() if response.content else {}
+
     def find_probability_cup_event(self) -> SpEvent:
         """Find the Probability Cup event by title (API type field is a UUID)."""
         events: list[dict[str, Any]] = self._get("/events")
@@ -163,7 +170,29 @@ class SportsPredictClient:
         response = request_with_retry(
             "POST", url, headers=self._headers, json_body=body
         )
+        logger.debug(
+            "POST /predictions/batch HTTP %s body=%s",
+            response.status_code,
+            response.text[:500],
+        )
         return response.json() if response.content else {}
+
+    def get_predictions_by_market(self, lobby_id: str) -> dict[str, str]:
+        """Return market_id -> prediction_id for this lobby."""
+        raw = self._get("/predictions", params={"lobby_id": lobby_id})
+        mapping: dict[str, str] = {}
+        for item in raw:
+            market_id = item.get("market_id")
+            prediction_id = item.get("id")
+            if market_id and prediction_id:
+                mapping[str(market_id)] = str(prediction_id)
+        return mapping
+
+    def update_prediction(self, prediction_id: str, probability: int) -> dict[str, Any]:
+        return self._patch(
+            f"/predictions/{prediction_id}",
+            {"probability": probability},
+        )
 
     def get_results(self, lobby_id: str) -> list[dict[str, Any]]:
         return self._get("/results", params={"lobby_id": lobby_id})
